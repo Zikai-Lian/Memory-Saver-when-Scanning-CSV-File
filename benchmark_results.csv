@@ -1,0 +1,5 @@
+approach,wall_time_s,peak_rss_mb,total_revenue,total_orders,correctness
+naive_pandas (load-all),14.968,3047.53,2258097297.0,15000000,reference
+chunked_pandas,14.435,273.4,2258097297.0,15000000,MATCH
+polars_lazy_streaming,2.972,971.8,2258097297.0,15000000,MATCH
+duckdb_sql,4.861,245.91,2258097297.0,15000000,MATCH
