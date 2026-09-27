@@ -66,11 +66,15 @@ correctness is checked automatically on every run, not just eyeballed once.
 Run it yourself:
 
 ```bash
-pip install pandas polars duckdb matplotlib numpy
+pip install -r requirements.txt
 python3 generate_data.py --rows 15000000 --out data/transactions.csv
 python3 benchmark.py --input data/transactions.csv
 python3 plot_results.py
+python3 -m pytest            # unit tests, a few seconds
 ```
+
+Peak RSS is reported correctly on both Linux and macOS (the kernel reports
+`ru_maxrss` in kilobytes on Linux but in bytes on macOS).
 
 ## Results
 
@@ -124,19 +128,56 @@ memory *and* speed simultaneously -- there's no real tradeoff to accept here,
 just a better default choice of tool. Chunked pandas remains a useful
 fallback when you can't add a new dependency but still need to bound memory.
 
+## Code design
+
+The project is built around a small class hierarchy so that adding a fifth
+approach means writing one class, with no changes to the benchmark itself.
+
+- **`Approach`** (`approaches/base.py`) is an abstract base class. Its public
+  `run(path)` method is shared by every approach (template method pattern):
+  it calls the subclass's `_aggregate(path)` and packages the answer.
+- **`NaivePandasApproach`, `ChunkedPandasApproach`, `PolarsLazyApproach`,
+  `DuckDBApproach`** each override `_aggregate()` with their own engine. The
+  benchmark treats them interchangeably through the `Approach` interface
+  (strategy pattern / polymorphism).
+- **`AggregationResult`** is an immutable dataclass holding the query answer.
+  Correctness checking is just `result == reference`.
+- **`get_approach(key)`** looks approaches up in a registry and imports each
+  module lazily, so a measured process only loads the library it uses (the
+  DuckDB process never imports pandas, which would inflate its memory).
+- **`IsolatedRunner`** and **`Measurement`** (`measurement.py`) run one
+  approach in a fresh process tree and capture its wall time and peak RSS.
+- **`Benchmark`** (`benchmark.py`) runs every approach, checks each result
+  against the first, and writes the results CSV. It accepts any runner
+  object, which lets the tests swap in a fake one.
+- **`BenchmarkPlotter`** (`plot_results.py`) and **`TransactionDataGenerator`**
+  (`generate_data.py`) wrap charting and data generation.
+
+```
+Approach (abstract)
+├── NaivePandasApproach
+├── ChunkedPandasApproach   (uses RunningGroupStats for per-chunk merging)
+├── PolarsLazyApproach
+└── DuckDBApproach
+```
+
 ## Repo layout
 
 ```
-outofcore-pipeline/
-├── generate_data.py          # synthetic dataset generator
-├── measure_run.py            # isolated subprocess wall-time + peak-RSS measurement
-├── benchmark.py               # runs all approaches, checks correctness, writes CSV
-├── plot_results.py            # renders the comparison chart
+├── generate_data.py          # TransactionDataGenerator: synthetic dataset
+├── benchmark.py              # Benchmark: runs all approaches, checks correctness, writes CSV
+├── measurement.py            # IsolatedRunner + Measurement
+├── measure_run.py            # fresh-process wrapper that records wall time + peak RSS
+├── run_approach.py           # runs one approach by key, prints its result
+├── plot_results.py           # BenchmarkPlotter: renders the comparison chart
 ├── approaches/
+│   ├── base.py               # Approach (abstract) + AggregationResult
 │   ├── naive_pandas.py
 │   ├── chunked_pandas.py
 │   ├── polars_lazy.py
 │   └── duckdb_approach.py
+├── tests/
+│   └── test_approaches.py    # pytest unit tests
 ├── results/
 │   ├── benchmark_results.csv
 │   └── benchmark_chart.png
